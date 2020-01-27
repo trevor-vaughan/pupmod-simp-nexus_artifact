@@ -1,6 +1,6 @@
 require 'simp/rake/pupmod/helpers'
 
-Simp::Rake::Pupmod::Helpers.new(File.join(__dir__, '..'))
+Simp::Rake::Pupmod::Helpers.new(File.absolute_path(File.join(__dir__, '..')))
 
 # Be sure to remove the rsync_share we have kludged into
 # spec/fixtures/acceptance, by specifying a relative path in .fixtures.yml

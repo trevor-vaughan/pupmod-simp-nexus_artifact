@@ -6,6 +6,10 @@
   unmanaged: true
 Gemfile:
   unmanaged: true
+  # This nonsense makes pdk new provider work
+  optional:
+    ':development':
+      - gem: 'puppet-resource_api'
 appveyor.yml:
   delete: true
 spec/spec_helper.rb:

@@ -24,6 +24,7 @@ end
 group :development do
   gem 'pry'
   gem 'pry-doc'
+  gem 'puppet-resource_api', require: false
 end
 
 group :system_tests do

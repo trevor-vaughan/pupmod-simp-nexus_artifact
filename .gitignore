@@ -9,6 +9,7 @@
 /.vagrant/
 /coverage/
 /bin/
+/dist/
 /doc/
 /Gemfile.local
 /Gemfile.lock

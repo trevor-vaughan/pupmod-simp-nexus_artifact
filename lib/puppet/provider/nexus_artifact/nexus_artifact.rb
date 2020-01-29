@@ -4,7 +4,7 @@ Puppet::Type.type(:nexus_artifact).provide(:nexus_artifact) do
   #Puppet::Util.which('setfattr')
 
   def exists?
-    remote_artifacts = get_artifacts(resource[:source], resource[:sleep])
+    remote_artifacts = get_artifacts(resource)
 
     require 'pry'
     binding.pry
@@ -27,63 +27,66 @@ Puppet::Type.type(:nexus_artifact).provide(:nexus_artifact) do
 
   private
 
-  def get_artifact_items(source, sleep_time=0)
+  def get_artifact_items(source, resource)
     uri = URI(source)
 
-    Net::HTTP.start(uri.host, uri.port, :use_ssl => uri.scheme == 'https') do |http|
-      request = Net::HTTP::Get.new(uri)
+    request = Net::HTTP::Get.new(uri)
 
+    if resource[:user] && resource[:password]
+      request.basic_auth(resource[:user], resource[:password])
+    end
+
+    conn = Net::HTTP.new(uri.host, uri.port)
+
+    if uri.scheme == 'https'
+      conn.use_ssl = true
+    end
+
+    if resource[:proxy]
+      conn.proxy_uri = URI(resource[:proxy])
+
+      if resource[:proxy_user] && resource[:proxy_pass]
+        conn.proxy_user = resource[:proxy_user]
+        conn.proxy_pass = resource[:proxy_pass]
+      end
+    end
+
+    conn.start do |http|
       response = http.request(request)
 
-      unless response.code == '200'
-        raise Puppet::Error, response.message
-      end
+      raise Puppet::Error, response.message unless (response.code == '200')
 
       require 'json'
 
       response_body = JSON.load(response.body)
 
-      sleep(sleep_time)
+      sleep(resource[:sleep] || 0)
 
       if response_body['continuationToken']
         _source = source.split('&continuationToken').first
 
-        return response_body['items'] + get_artifact_items("#{_source}&continuationToken=#{response_body['continuationToken']}", sleep_time)
+        return response_body['items'] + get_artifact_items("#{_source}&continuationToken=#{response_body['continuationToken']}", resource)
       else
         return response_body['items']
       end
     end
   end
 
-  def get_artifacts(source, sleep_time)
+  def get_artifacts(resource)
     require 'net/http'
 
-    if source.include?('?')
-      _source = source.dup
-    else
-      uri_regex = %r{\A
-        (?<header>http(s)?://)
-        (?<server>.+?)/
-        (?<repo_name>.+?)/
-        (?<artifact_name>.+)
-        \Z
-      }x
-
-      matches = uri_regex.match(source)
-
-      _source = matches[:header] +
-        matches[:server] +
-        '/service/rest/v1/search?' +
-        'repository=' + matches[:repo_name] +
-        '&name=' + matches[:artifact_name]
-    end
+    source = resource[:protocol].to_s + '://' +
+      resource[:server] +
+      '/service/rest/v1/search?' +
+      'repository=' + resource[:repository] +
+      '&name=' + resource[:artifact]
 
     begin
-      return get_artifact_items(_source, sleep_time)
+      return get_artifact_items(source, resource)
     rescue => e
       # This catches all of the random possible things that can go wrong with
       # HTTP connections.
-      raise Puppet::Error, "Could not fetch results from '#{source}' => '#{e}'"
+      raise Puppet::Error, "Could not fetch artifacts from '#{resource[:repository]}/#{resource[:artifact]}' => '#{e}'"
     end
   end
 end

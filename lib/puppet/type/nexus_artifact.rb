@@ -13,6 +13,8 @@ Puppet::Type.newtype(:nexus_artifact) do
       * `File[$name]`
   DOC
 
+  # Mandatory Parameters
+
   newparam(:path, :namevar => true) do
     desc 'The absolute path for the downloaded artifact'
 
@@ -20,6 +22,25 @@ Puppet::Type.newtype(:nexus_artifact) do
       unless Puppet::Util.absolute_path?(value, :posix) || Puppet::Util.absolute_path?(value, :windows)
         raise ArgumentError, %{File paths must be fully qualified, not '#{value}'}
       end
+    end
+  end
+
+  newproperty(:ensure) do
+    desc <<~DOC
+      The state that the resource should be in on the system. May be one of:
+
+        * present          => Ensure that the resource exists at all
+        * absent           => Ensure that the resource is not present on the system
+        * latest           => Ensure that the resource is the latest available
+        * <version string> => Attempt to match the specified version, raise an error if the version does not exist
+    DOC
+
+    newvalues(:present, :absent, :latest, /./)
+
+    defaultto(:present)
+
+    def insync?(is)
+      provider.insync?(is, @should)
     end
   end
 
@@ -39,6 +60,25 @@ Puppet::Type.newtype(:nexus_artifact) do
     defaultto(:https)
   end
 
+  newparam(:repository) do
+    desc <<~DOC
+      The repository to search for the artifact
+    DOC
+  end
+
+  newparam(:artifact) do
+    desc <<~DOC
+      The full path to the artifact in `$repository`
+
+      For instance, if you want to find find the artifact in `foo/app` then this
+      should be `foo/app`
+    DOC
+  end
+
+  # Optional Items
+
+  ## Nexus Auth
+
   newparam(:user) do
     desc <<~DOC
       The user to use for authenticating to `$server`
@@ -52,6 +92,8 @@ Puppet::Type.newtype(:nexus_artifact) do
       Has no effect if `$user` is not set
     DOC
   end
+
+  ## Proxy
 
   newparam(:proxy) do
     desc <<~DOC
@@ -73,21 +115,45 @@ Puppet::Type.newtype(:nexus_artifact) do
     DOC
   end
 
-  newparam(:repository) do
+  ## Validation
+
+  newparam(:ca_certificate) do
     desc <<~DOC
-      The repository to search for the artifact
+      The path to a file containing the CA public certificate or a directory
+      containing CA public certificates
     DOC
+
+    validate do |value|
+      unless Puppet::Util.absolute_path?(value, :posix) || Puppet::Util.absolute_path?(value, :windows)
+        raise ArgumentError, %{File paths must be fully qualified, not '#{value}'}
+      end
+    end
   end
 
-  newparam(:artifact) do
+  newparam(:ssl_verify) do
     desc <<~DOC
-      The full path to the artifact in `$repository`
+      Disable or set the dept for SSL server validation
 
-      For instance, if you want to find find the artifact in `foo/app` then this
-      should be `foo/app`
+      Has no effect if `$ca_certificate` is not set
     DOC
+
+    newvalues(:true, :false, /\A\d+\Z/)
+
+    defaultto('true')
+
+    munge do |value|
+      case value
+      when 'true'
+        true
+      when 'false'
+        false
+      else
+        value.to_i
+      end
+    end
   end
 
+  ## Be nice to your servers
   newparam(:sleep) do
     desc <<~DOC
       The number of seconds to sleep between pagination updates
@@ -106,20 +172,18 @@ Puppet::Type.newtype(:nexus_artifact) do
     end
   end
 
-  ensurable do
+  newparam(:connection_timeout) do
     desc <<~DOC
-      The state that the resource should be in on the system. May be one of:
+      Number of seconds to wait for a response and artifact download from the server
 
-        * present          => Ensure that the resource exists at all
-        * absent           => Ensure that the resource is not present on the system
-        * latest           => Ensure that the resource is the latest available
-        * <version string> => Attempt to match the specified version, raise an error if the version does not exist
+      NOTE: This will *kill* any existing connection and large downloads may not
+      be retrieved successfully
     DOC
 
-    newvalues(:present, :absent, :latest, /./)
+    newvalues(/\A\d+\Z/)
 
-    def insync?(is)
-      provider.insync?(is, @should)
+    munge do |value|
+      value.to_i
     end
   end
 

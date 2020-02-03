@@ -2,9 +2,6 @@ Puppet::Type.type(:nexus_artifact).provide(:nexus_artifact) do
   desc 'Provider for Nexus artifacts'
 
   def ensure
-    @remote_artifacts = get_artifacts(resource)
-    @latest_artifact = find_latest_artifact(@remote_artifacts)
-
     return :absent unless File.exist?(resource[:path])
 
     if resource[:ensure] == :present
@@ -23,13 +20,18 @@ Puppet::Type.type(:nexus_artifact).provide(:nexus_artifact) do
   def insync?(is, should)
     retval = false
 
-    if [:present, :absent].include?(resource[:ensure])
+    if resource[:ensure] == :present
       retval = File.exist?(resource[:path])
+    elsif resource[:ensure] == :absent
+      retval = !File.exist?(resource[:path])
     else
       if resource[:ensure] == :latest
+        get_latest_artifact(resource)
+
         require 'pry'
         binding.pry
       else
+        # TODO: Version matching
         require 'pry'
         binding.pry
 
@@ -43,14 +45,17 @@ Puppet::Type.type(:nexus_artifact).provide(:nexus_artifact) do
   def ensure=(should)
     # We always download the latest one by default
     if [:present, :latest].include?(should)
-      download_asset(resource[:path], @latest_artifact['downloadUrl'])
-      set_file_attrs(resource[:path], @latest_artifact)
+      latest_artifact = get_latest_artifact(resource)
+      download_asset(resource[:path], latest_artifact['downloadUrl'])
+      set_file_attrs(resource[:path], latest_artifact)
 
     # The removal case
     elsif should == :absent
+      FileUtils.rm_f(resource[:path])
 
     # The case where we want a specific version
     else
+      #TODO
     end
   end
 
@@ -119,8 +124,10 @@ Puppet::Type.type(:nexus_artifact).provide(:nexus_artifact) do
     return [request, conn]
   end
 
-  def find_latest_artifact(artifacts)
-    latest_artifact = artifacts.sort do |a, b|
+  def get_latest_artifact(resource)
+    return @latest_artifact if @latest_artifact
+
+    latest_artifact = get_artifacts(resource).sort do |a, b|
       # If we have two versions, compare them
       if a['version'] && b['version']
         Puppet::Util::Package.versioncmp( a['version'], b['version'] )
@@ -141,7 +148,9 @@ Puppet::Type.type(:nexus_artifact).provide(:nexus_artifact) do
     latest_artifact = latest_artifact['assets'].first
     latest_artifact['version'] = artifact_version
 
-    return latest_artifact
+    @latest_artifact = latest_artifact
+
+    return @latest_artifact
   end
 
   def get_artifact_items(source, resource)
@@ -169,6 +178,8 @@ Puppet::Type.type(:nexus_artifact).provide(:nexus_artifact) do
   end
 
   def get_artifacts(resource)
+    return @remote_artifacts if @remote_artifacts
+
     require 'net/http'
 
     source = resource[:protocol].to_s + '://' +
@@ -182,7 +193,8 @@ Puppet::Type.type(:nexus_artifact).provide(:nexus_artifact) do
 
       raise Puppet::Error, "No remote artifacts found at #{source}" if artifact_items.empty?
 
-      return artifact_items
+      @remote_artifacts = artifact_items
+      return @remote_artifacts
     rescue => e
       # This catches all of the random possible things that can go wrong with
       # HTTP connections.
@@ -226,7 +238,7 @@ Puppet::Type.type(:nexus_artifact).provide(:nexus_artifact) do
     return attrs unless File.exist?(path)
 
     if Facter.value(:kernel).downcase == 'windows'
-      # TBD
+      # TODO
     else
       getfattr = Puppet::Util.which('getfattr')
 
@@ -259,7 +271,7 @@ Puppet::Type.type(:nexus_artifact).provide(:nexus_artifact) do
     return attrs unless File.exist?(path)
 
     if Facter.value(:kernel).downcase == 'windows'
-      # TBD
+      # TODO
     else
       setfattr = Puppet::Util.which('setfattr')
 

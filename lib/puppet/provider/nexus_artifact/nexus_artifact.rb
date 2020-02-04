@@ -19,6 +19,7 @@ Puppet::Type.type(:nexus_artifact).provide(:nexus_artifact) do
 
   def insync?(is, should)
     retval = false
+    do_full_checksum = false
 
     if resource[:ensure] == :present
       retval = File.exist?(resource[:path])
@@ -48,15 +49,18 @@ Puppet::Type.type(:nexus_artifact).provide(:nexus_artifact) do
                 end
               end
             else
-              # We don't have a local version so we need to fall back on checksums
+              # We don't have a local version so we need to fall back on checksum metadata
               # TODO
             end
           end
         else
-          # We have no file attributes so we have to fall back on real-time checksums
-          # TODO
+          do_full_checksum = true
         end
       end
+    end
+
+    if do_full_checksum
+      # TODO: Perform a full file checksum
     end
 
     return retval
@@ -70,7 +74,7 @@ Puppet::Type.type(:nexus_artifact).provide(:nexus_artifact) do
       artifact = get_artifact(resource)
 
       if artifact
-        download_asset(resource[:path], artifact['downloadUrl'])
+        download_asset(resource[:path], artifact, resource[:verify_download])
         set_file_attrs(resource[:path], artifact)
       else
         raise Puppet::Error, "Could not find '#{resource[:repository]}/#{resource[:artifact]}' version '#{resource[:ensure]}' on '#{resource[:server]}'"
@@ -231,7 +235,7 @@ Puppet::Type.type(:nexus_artifact).provide(:nexus_artifact) do
     end
   end
 
-  def download_asset(path, url)
+  def download_asset(path, artifact, verify=false)
     target_dir = File.dirname(path)
     target_filename = File.basename(path)
     temp_file = File.join(target_dir, '.' + target_filename)
@@ -241,7 +245,7 @@ Puppet::Type.type(:nexus_artifact).provide(:nexus_artifact) do
     end
 
     begin
-      request, conn = setup_connection(URI(url), resource)
+      request, conn = setup_connection(URI(artifact['downloadUrl']), resource)
 
       conn.request(request) do |response|
         File.open(temp_file, 'wb') do |fh|
@@ -249,6 +253,10 @@ Puppet::Type.type(:nexus_artifact).provide(:nexus_artifact) do
             fh.write chunk
           end
         end
+      end
+
+      if verify
+        #TODO: Cheksum stuff, raise error on failure and remove temp_file
       end
 
       FileUtils.mv(temp_file, path)

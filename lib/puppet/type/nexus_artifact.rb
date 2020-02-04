@@ -153,7 +153,20 @@ Puppet::Type.newtype(:nexus_artifact) do
     end
   end
 
+  newparam(:verify_download, :boolean => false, :parent => Puppet::Parameter::Boolean) do
+    desc <<~DOC
+      If a file has been downloaded, validate that the downloaded artifact
+      checksum matches the one that was provided by Nexus.
+
+      WARNING: This may add a great deal of load to your system for large artifacts.
+
+      In general, this is not necessary but may be wise on critical assets.
+    DOC
+    defaultto false
+  end
+
   ## Be nice to your servers
+
   newparam(:sleep) do
     desc <<~DOC
       The number of seconds to sleep between pagination updates

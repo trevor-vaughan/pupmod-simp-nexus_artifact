@@ -10,10 +10,10 @@ Puppet::Type.type(:nexus_artifact).provide(:nexus_artifact) do
 
     attrs = get_file_attrs(resource[:path])
 
-    if attrs && attrs['version']
-      return attrs['version']
+    if attrs && attrs['user.pup.simp.nexus.ver']
+      return attrs['user.pup.simp.nexus.ver']
     else
-      return :undefined
+      return :unknown_version
     end
   end
 
@@ -25,17 +25,37 @@ Puppet::Type.type(:nexus_artifact).provide(:nexus_artifact) do
     elsif resource[:ensure] == :absent
       retval = !File.exist?(resource[:path])
     else
-      if resource[:ensure] == :latest
-        get_latest_artifact(resource)
+      if File.exist?(resource[:path])
+        file_attrs = get_file_attrs(resource[:path])
 
-        require 'pry'
-        binding.pry
-      else
-        # TODO: Version matching
-        require 'pry'
-        binding.pry
+        if file_attrs
+          # If the file has been modified, assume that it is out of sync
+          if file_attrs["#{attr_prefix}.pup.simp.mtime"].to_i == File.mtime(resource[:path]).to_i
 
-        puts 'foo'
+            # No reason to hit the network if we can determine that we have the
+            # correct version
+            current_version = file_attrs["#{attr_prefix}.pup.simp.nexus.ver"]
+            if current_version
+              unless resource[:ensure] == :latest
+                retval = resource[:ensure] == current_version
+              end
+
+              unless retval
+                artifact = get_artifact(resource)
+
+                if artifact
+                  retval = artifact['version'] == file_attrs['user.pup.simp.nexus.ver']
+                end
+              end
+            else
+              # We don't have a local version so we need to fall back on checksums
+              # TODO
+            end
+          end
+        else
+          # We have no file attributes so we have to fall back on real-time checksums
+          # TODO
+        end
       end
     end
 
@@ -44,18 +64,17 @@ Puppet::Type.type(:nexus_artifact).provide(:nexus_artifact) do
 
   def ensure=(should)
     # We always download the latest one by default
-    if [:present, :latest].include?(should)
-      latest_artifact = get_latest_artifact(resource)
-      download_asset(resource[:path], latest_artifact['downloadUrl'])
-      set_file_attrs(resource[:path], latest_artifact)
-
-    # The removal case
-    elsif should == :absent
+    if should == :absent
       FileUtils.rm_f(resource[:path])
-
-    # The case where we want a specific version
     else
-      #TODO
+      artifact = get_artifact(resource)
+
+      if artifact
+        download_asset(resource[:path], artifact['downloadUrl'])
+        set_file_attrs(resource[:path], artifact)
+      else
+        raise Puppet::Error, "Could not find '#{resource[:repository]}/#{resource[:artifact]}' version '#{resource[:ensure]}' on '#{resource[:server]}'"
+      end
     end
   end
 
@@ -124,33 +143,43 @@ Puppet::Type.type(:nexus_artifact).provide(:nexus_artifact) do
     return [request, conn]
   end
 
-  def get_latest_artifact(resource)
-    return @latest_artifact if @latest_artifact
+  def get_artifact(resource)
+    artifacts = get_artifacts(resource)
 
-    latest_artifact = get_artifacts(resource).sort do |a, b|
-      # If we have two versions, compare them
-      if a['version'] && b['version']
-        Puppet::Util::Package.versioncmp( a['version'], b['version'] )
-      # If only a has a version, it wins
-      elsif a['version']
-        1
-      # If only b has a version, it wins
-      elsif b['version']
-        -1
-      # If neither have a version, they tie
-      else
-        0
-      end
-    end.last
+    retval = nil
 
-    # We don't need all the cruft
-    artifact_version = latest_artifact['version']
-    latest_artifact = latest_artifact['assets'].first
-    latest_artifact['version'] = artifact_version
+    if resource[:ensure].to_s == 'latest'
+      return @latest_artifact if @latest_artifact
 
-    @latest_artifact = latest_artifact
+      retval = artifacts.sort do |a, b|
+        # If we have two versions, compare them
+        if a['version'] && b['version']
+          Puppet::Util::Package.versioncmp( a['version'], b['version'] )
+        # If only a has a version, it wins
+        elsif a['version']
+          1
+        # If only b has a version, it wins
+        elsif b['version']
+          -1
+        # If neither have a version, they tie
+        else
+          0
+        end
+      end.last
+    else
+      retval = artifacts.find{|a| a['version'] == resource[:ensure]}
+    end
 
-    return @latest_artifact
+    if retval
+      # We don't need all the cruft
+      artifact_version = retval['version']
+      retval = retval['assets'].first
+      retval['version'] = artifact_version
+
+      @latest_artifact = retval if (resource[:ensure].to_s == 'latest')
+    end
+
+    return retval
   end
 
   def get_artifact_items(source, resource)
@@ -232,6 +261,23 @@ Puppet::Type.type(:nexus_artifact).provide(:nexus_artifact) do
     Puppet.features.root? ? 'trusted' : 'user'
   end
 
+  def getfattr
+    @getfattr ||= Puppet::Util.which('getfattr')
+
+    return @getfattr
+  end
+
+  def get_file_attribute(path, key)
+    command = [getfattr, '-d', '-m', key, path]
+    output = Puppet::Util::Execution.execute(command, failonfail: false, combine: true)
+
+    unless output.exitstatus == 0
+      Puppet.debug("Could not get attributes on #{path} '#{command.join(' ')}' failed: '#{output.to_s}'")
+    end
+
+    return output
+  end
+
   def get_file_attrs(path)
     attrs = nil
 
@@ -240,11 +286,8 @@ Puppet::Type.type(:nexus_artifact).provide(:nexus_artifact) do
     if Facter.value(:kernel).downcase == 'windows'
       # TODO
     else
-      getfattr = Puppet::Util.which('getfattr')
-
       if getfattr
-        command = [getfattr, '-d', '-m', "'^#{attr_prefix}\.puppet\.simp'", path]
-        output = Puppet::Util::Execution.execute(command, failonfail: false, combine: true)
+        output = get_file_attribute(path, "#{attr_prefix}.")
 
         if output.exitstatus == 0
           attrs = Hash[
@@ -254,51 +297,55 @@ Puppet::Type.type(:nexus_artifact).provide(:nexus_artifact) do
               [k,v]
             end
           ]
-        else
-          Puppet.debug("Could not get attributes from #{path} '#{command.join(' ')}' failed: '#{output.to_s}'")
         end
       else
-        Puppet.debug('getfattr not found, cannot set extended attributes')
+        Puppet.debug('getfattr not found, cannot get extended attributes')
       end
     end
 
-    attrs
+    return attrs
+  end
+
+  def setfattr
+    @setfattr ||= Puppet::Util.which('setfattr')
+
+    return @setfattr
   end
 
   def set_file_attrs(path, asset_info={})
-    attrs = {}
+    if File.exist?(path)
+      attrs = [
+        %{#{attr_prefix}.pup.simp.mtime="#{File.mtime(path).to_i}"}
+      ]
 
-    return attrs unless File.exist?(path)
+      if asset_info['checksum']
+        asset_info['checksum'].each do |family, value|
+          attrs << %{#{attr_prefix}.cksum.#{family}="#{value}"}
+        end
+      end
 
-    if Facter.value(:kernel).downcase == 'windows'
-      # TODO
-    else
-      setfattr = Puppet::Util.which('setfattr')
+      if asset_info['version']
+        attrs << %{#{attr_prefix}.pup.simp.nexus.ver="#{asset_info['version']}"}
+      end
 
-      if setfattr
-        if asset_info['checksum']
-          asset_info['checksum'].each do |family, value|
-            command = [setfattr, '-n', "#{attr_prefix}.checksum.#{family}", '-v', "#{value}", path]
+      if Facter.value(:kernel).downcase == 'windows'
+        # TODO
+      else
+        if setfattr
+          Dir.mktmpdir do |tmpdir|
+            # The 'getfattr --dump' format allows for a single command call
+            File.write('temp.attrs', ([ "# file: #{path}" ] + attrs).join("\n"))
 
+            command = [setfattr, '--restore', 'temp.attrs']
             output = Puppet::Util::Execution.execute(command, failonfail: false, combine: true)
 
             unless output.exitstatus == 0
               Puppet.debug("Could not set attributes on #{path} '#{command.join(' ')}' failed: '#{output.to_s}'")
             end
           end
+        else
+          Puppet.debug('setfattr not found, cannot set extended attributes')
         end
-
-        if asset_info['version']
-          command = [setfattr, '-n', "#{attr_prefix}.puppet.simp.nexus.version", '-v', "#{asset_info['version']}", path]
-
-          output = Puppet::Util::Execution.execute(command, failonfail: false, combine: true)
-
-          unless output.exitstatus == 0
-            Puppet.debug("Could not set attributes on #{path} '#{command.join(' ')}' failed: '#{output.to_s}'")
-          end
-        end
-      else
-        Puppet.debug('setfattr not found, cannot set extended attributes')
       end
     end
   end

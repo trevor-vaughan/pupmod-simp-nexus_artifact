@@ -1,87 +1,118 @@
+[![License](https://img.shields.io/:license-apache-blue.svg)](https://www.apache.org/licenses/LICENSE-2.0.html)
+[![CII Best Practices](https://bestpractices.coreinfrastructure.org/projects/73/badge)](https://bestpractices.coreinfrastructure.org/projects/73)
+[![Puppet Forge](https://img.shields.io/puppetforge/v/nexus_artifact/auditd.svg)](https://forge.puppetlabs.com/nexus_artifact/auditd)
+[![Puppet Forge Downloads](https://img.shields.io/puppetforge/dt/nexus_artifact/auditd.svg)](https://forge.puppetlabs.com/nexus_artifact/auditd)
+[![Build Status](https://travis-ci.org/nexus_artifact/pupmod-nexus_artifact-auditd.svg)](https://travis-ci.org/nexus_artifact/pupmod-nexus_artifact-auditd)
+
 # nexus_artifact
-
-Welcome to your new module. A short overview of the generated parts can be found in the PDK documentation at https://puppet.com/pdk/latest/pdk_generating_modules.html .
-
-The README template below provides a starting point with details about what information to include in your README.
 
 #### Table of Contents
 
-1. [Description](#description)
-2. [Setup - The basics of getting started with nexus_artifact](#setup)
-    * [What nexus_artifact affects](#what-nexus_artifact-affects)
-    * [Setup requirements](#setup-requirements)
-    * [Beginning with nexus_artifact](#beginning-with-nexus_artifact)
-3. [Usage - Configuration options and additional functionality](#usage)
-4. [Limitations - OS compatibility, etc.](#limitations)
-5. [Development - Guide for contributing to the module](#development)
+<!-- vim-markdown-toc GFM -->
+
+* [Description](#description)
+  * [Beginning with nexus_artifact](#beginning-with-nexus_artifact)
+* [Usage](#usage)
+  * [Ensure that the artifact is present](#ensure-that-the-artifact-is-present)
+  * [Ensure that the artifact is the latest version](#ensure-that-the-artifact-is-the-latest-version)
+  * [Ensure that the artifact is a specific version](#ensure-that-the-artifact-is-a-specific-version)
+* [Limitations](#limitations)
+* [Development](#development)
+  * [Acceptance tests](#acceptance-tests)
+
+<!-- vim-markdown-toc -->
 
 ## Description
 
-Briefly tell users why they might want to use your module. Explain what your module does and what kind of problems users can solve with it.
+This module provides a native puppet type for downloading artifacts from a
+Sonatype Nexus 3+ server.
 
-This should be a fairly short description helps the user decide if your module is what they want.
+Care was taken to keep as many of the capabilities as possible in pure Ruby for
+maximum portabilty.
 
-## Setup
+HTTPS is used where possible but may be disabled if required.
 
-### What nexus_artifact affects **OPTIONAL**
+Extended file metadata is used if possible to record relevant details to
+make version and checksum comparisons faster during future asset comparisons.
 
-If it's obvious what your module touches, you can skip this section. For example, folks can probably figure out that your mysql_instance module affects their MySQL instances.
-
-If there's more that they should know about, though, this is the place to mention:
-
-* Files, packages, services, or operations that the module will alter, impact, or execute.
-* Dependencies that your module automatically installs.
-* Warnings or other important notices.
-
-### Setup Requirements **OPTIONAL**
-
-If your module requires anything extra before setting up (pluginsync enabled, another module, etc.), mention it here.
-
-If your most recent release breaks compatibility or requires particular steps for upgrading, you might want to include an additional "Upgrading" section here.
+See [REFERENCE.md](./REFERENCE.md) for full API details.
 
 ### Beginning with nexus_artifact
 
-The very basic steps needed for a user to get the module up and running. This can include setup steps, if necessary, or it can be an example of the most basic use of the module.
-
 ## Usage
 
-Include usage examples for common use cases in the **Usage** section. Show your users how to use your module to solve problems, and be sure to include code examples. Include three to five examples of the most important or common tasks a user can accomplish with your module. Show users how to accomplish more complex tasks that involve different types, classes, and functions working in tandem.
+Basic usage is quite simple.
 
-## Reference
+### Ensure that the artifact is present
 
-This section is deprecated. Instead, add reference information to your code as Puppet Strings comments, and then use Strings to generate a REFERENCE.md in your module. For details on how to add code comments and generate documentation with Strings, see the Puppet Strings [documentation](https://puppet.com/docs/puppet/latest/puppet_strings.html) and [style guide](https://puppet.com/docs/puppet/latest/puppet_strings_style.html)
-
-If you aren't ready to use Strings yet, manually create a REFERENCE.md in the root of your module directory and list out each of your module's classes, defined types, facts, functions, Puppet tasks, task plans, and resource types and providers, along with the parameters for each.
-
-For each element (class, defined type, function, and so on), list:
-
-  * The data type, if applicable.
-  * A description of what the element does.
-  * Valid values, if the data type doesn't make it obvious.
-  * Default value, if any.
-
-For example:
-
+```puppet
+nexus_artifact { '/tmp/thor.gem':
+  server     => 'my.server.com',
+  repository => 'Rubygems',
+  artifact   => 'thor'
+}
 ```
-### `pet::cat`
 
-#### Parameters
+### Ensure that the artifact is the latest version
 
-##### `meow`
+```puppet
+nexus_artifact { '/tmp/thor.gem':
+  ensure     => 'latest',
+  server     => 'my.server.com',
+  repository => 'Rubygems',
+  artifact   => 'thor'
+}
+```
 
-Enables vocalization in your cat. Valid options: 'string'.
+### Ensure that the artifact is a specific version
 
-Default: 'medium-loud'.
+```puppet
+nexus_artifact { '/tmp/thor.gem':
+  ensure     => '1.0.1',
+  server     => 'my.server.com',
+  repository => 'Rubygems',
+  artifact   => 'thor'
+}
 ```
 
 ## Limitations
 
-In the Limitations section, list any incompatibilities, known issues, or other warnings.
+Currently, the module does not support writing extended file metadata on Windows.
 
 ## Development
 
-In the Development section, tell other users the ground rules for contributing to your project and how they should submit their work.
+Please read our [Contribution Guide](https://simp.readthedocs.io/en/stable/contributors_guide/Contribution_Procedure.html)
 
-## Release Notes/Contributors/Etc. **Optional**
+### Acceptance tests
 
-If you aren't using changelog, put your release notes here (though you should consider using changelog). You can also add any additional sections you feel are necessary or important to include here. Please use the `## ` header.
+This module includes [Beaker](https://github.com/puppetlabs/beaker) acceptance
+tests using the SIMP [Beaker Helpers](https://github.com/simp/rubygem-simp-beaker-helpers).
+By default the tests use [Vagrant](https://www.vagrantup.com/) with
+[VirtualBox](https://www.virtualbox.org) as a back-end; Vagrant and VirtualBox
+must both be installed to run these tests without modification. To execute the
+tests run the following:
+
+```shell
+bundle exec rake beaker:suites
+```
+
+Some environment variables may be useful:
+
+```shell
+BEAKER_debug=true
+BEAKER_provision=no
+BEAKER_destroy=no
+BEAKER_use_fixtures_dir_for_modules=yes
+BEAKER_fips=yes
+```
+
+* `BEAKER_debug`: show the commands being run on the STU and their output.
+* `BEAKER_destroy=no`: prevent the machine destruction after the tests finish so you can inspect the state.
+* `BEAKER_provision=no`: prevent the machine from being recreated. This can save a lot of time while you're writing the tests.
+* `BEAKER_use_fixtures_dir_for_modules=yes`: cause all module dependencies to be loaded from the `spec/fixtures/modules` directory, based on the contents of `.fixtures.yml`.  The contents of this directory are usually populated by `bundle exec rake spec_prep`.  This can be used to run acceptance tests to run on isolated networks.
+* `BEAKER_fips=yes`: enable FIPS-mode on the virtual instances. This can
+  take a very long time, because it must enable FIPS in the kernel
+  command-line, rebuild the initramfs, then reboot.
+
+Please refer to the [SIMP Beaker Helpers documentation](https://github.com/simp/rubygem-simp-beaker-helpers/blob/master/README.md)
+for more information.

@@ -35,7 +35,8 @@ Puppet::Type.type(:nexus_artifact).provide(:nexus_artifact) do
 
             # No reason to hit the network if we can determine that we have the
             # correct version
-            current_version = file_attrs["#{attr_prefix}.pup.simp.nexus.ver"]
+            #current_version = file_attrs["#{attr_prefix}.pup.simp.nexus.ver"]
+            current_version = nil
             if current_version
               unless resource[:ensure] == :latest
                 retval = resource[:ensure] == current_version
@@ -51,6 +52,28 @@ Puppet::Type.type(:nexus_artifact).provide(:nexus_artifact) do
             else
               # We don't have a local version so we need to fall back on checksum metadata
               # TODO
+              checksums = file_attrs.keys.grep(/\.cksum\..+/)
+
+              if checksums.empty?
+                do_full_checksum = true
+              else
+                artifact = get_artifact(resource)
+
+                checksums.each do |cksum|
+                  cksum_type = cksum.split('.').last
+
+                  if artifact['checksum'] && artifact['checksum'][cksum_type]
+                    artifact_checksum = artifact['checksum'][cksum_type]
+
+                    if artifact_checksum && (artifact_checksum == file_attrs[cksum])
+                      retval = true
+                      break
+                    else
+                      break
+                    end
+                  end
+                end
+              end
             end
           end
         else
@@ -60,6 +83,9 @@ Puppet::Type.type(:nexus_artifact).provide(:nexus_artifact) do
     end
 
     if do_full_checksum
+      if Puppet::Util::Checksums.respond_to?("#{cksum_type}_file")
+
+      end
       # TODO: Perform a full file checksum
     end
 
@@ -256,7 +282,7 @@ Puppet::Type.type(:nexus_artifact).provide(:nexus_artifact) do
       end
 
       if verify
-        #TODO: Cheksum stuff, raise error on failure and remove temp_file
+        #TODO: Checksum stuff, raise error on failure and remove temp_file
       end
 
       FileUtils.mv(temp_file, path)

@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 Puppet::Type.newtype(:nexus_artifact) do
   @doc = <<~DOC
     Provides the capability to manage local artifacts as retrieved from a
@@ -15,12 +17,12 @@ Puppet::Type.newtype(:nexus_artifact) do
 
   # Mandatory Parameters
 
-  newparam(:path, :namevar => true) do
+  newparam(:path, namevar: true) do
     desc 'The absolute path for the downloaded artifact'
 
     validate do |value|
       unless Puppet::Util.absolute_path?(value, :posix) || Puppet::Util.absolute_path?(value, :windows)
-        raise ArgumentError, %{File paths must be fully qualified, not '#{value}'}
+        raise ArgumentError, %(File paths must be fully qualified, not '#{value}')
       end
     end
   end
@@ -35,12 +37,12 @@ Puppet::Type.newtype(:nexus_artifact) do
         * <version string> => Attempt to match the specified version, raise an error if the version does not exist
     DOC
 
-    newvalues(:present, :absent, :latest, /./)
+    newvalues(:present, :absent, :latest, %r{.})
 
     defaultto(:present)
 
-    def insync?(is)
-      provider.insync?(is, @should)
+    def insync?(current_value)
+      provider.ensure_insync?(current_value, should)
     end
   end
 
@@ -125,7 +127,7 @@ Puppet::Type.newtype(:nexus_artifact) do
 
     validate do |value|
       unless Puppet::Util.absolute_path?(value, :posix) || Puppet::Util.absolute_path?(value, :windows)
-        raise ArgumentError, %{File paths must be fully qualified, not '#{value}'}
+        raise ArgumentError, %(File paths must be fully qualified, not '#{value}')
       end
     end
   end
@@ -137,7 +139,7 @@ Puppet::Type.newtype(:nexus_artifact) do
       Has no effect if `$ca_certificate` is not set
     DOC
 
-    newvalues(:true, :false, /\A\d+\Z/)
+    newvalues(:true, :false, %r{\A\d+\Z})
 
     defaultto('true')
 
@@ -153,7 +155,7 @@ Puppet::Type.newtype(:nexus_artifact) do
     end
   end
 
-  newparam(:verify_download, :boolean => false, :parent => Puppet::Parameter::Boolean) do
+  newparam(:verify_download, boolean: false, parent: Puppet::Parameter::Boolean) do
     desc <<~DOC
       If a file has been downloaded, validate that the downloaded artifact
       checksum matches the one that was provided by Nexus.
@@ -178,7 +180,7 @@ Puppet::Type.newtype(:nexus_artifact) do
 
     defaultto('0')
 
-    newvalues(/\A\d(\.\d)?\Z/)
+    newvalues(%r{\A\d(\.\d)?\Z})
 
     munge do |value|
       value.to_f
@@ -193,7 +195,7 @@ Puppet::Type.newtype(:nexus_artifact) do
       be retrieved successfully
     DOC
 
-    newvalues(/\A\d+\Z/)
+    newvalues(%r{\A\d+\Z})
 
     munge do |value|
       value.to_i
@@ -202,7 +204,7 @@ Puppet::Type.newtype(:nexus_artifact) do
 
   validate do
     required_parameters = [:server, :repository, :artifact]
-    missing_parameters = required_parameters.select{|x| !self[x] }
+    missing_parameters = required_parameters.reject { |x| self[x] }
 
     unless missing_parameters.empty?
       raise Puppet::Error, "The following parameters must be specified: '#{required_parameters.join(', ')}'"

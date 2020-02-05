@@ -5,9 +5,12 @@ gem_sources = ENV.fetch('GEM_SERVERS','https://rubygems.org').split(/[, ]+/)
 
 gem_sources.each { |gem_source| source gem_source }
 
+ENV['PUPPET_VERSION'] ||= ENV['PDK_PUPPET_VERSION']
+ENV['PUPPET_VERSION'] ||= '~> 5.5'
+
 group :test do
   gem 'rake'
-  gem 'puppet', ENV.fetch('PUPPET_VERSION', '~> 5.5')
+  gem 'puppet'
   gem 'rspec'
   gem 'rspec-puppet'
   gem 'hiera-puppet-helper'
@@ -19,6 +22,9 @@ group :test do
   gem 'simp-rspec-puppet-facts', ENV.fetch('SIMP_RSPEC_PUPPET_FACTS_VERSION', '~> 2.2')
   gem 'simp-rake-helpers', ENV.fetch('SIMP_RAKE_HELPERS_VERSION', '~> 5.9')
   gem 'facterdb'
+  gem 'rubocop'
+  gem 'rubocop-rspec'
+  gem 'rubocop-i18n'
 end
 
 group :development do

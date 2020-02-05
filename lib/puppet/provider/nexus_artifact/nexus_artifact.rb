@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 Puppet::Type.type(:nexus_artifact).provide(:nexus_artifact) do
   desc 'Provider for Nexus artifacts'
 
@@ -5,125 +7,131 @@ Puppet::Type.type(:nexus_artifact).provide(:nexus_artifact) do
   #
   # @return [:absent, :present, String] the state of the resource on disk
   #   * :absent          => the file is not present
-  #   * :present         => the file is present and that is what the resource cares about
+  #   * :present         => the file is present and the resource does not specify a version
   #   * String           => the actual version of the file from the file metadata
+  #   * :mtime_changed   => The mtime in the metadtaa does not match the target file
   #   * :unknown_version => unable to determine the version from the file metadata
   def ensure
     return :absent unless File.exist?(resource[:path])
-    return :present if (resource[:ensure] == :present && File.exist?(resource[:path]))
 
     attrs = get_file_attrs(resource[:path])
 
-    if attrs && attrs["#{attr_prefix}.pup.simp.nexus.ver"]
-      return attrs["#{attr_prefix}.pup.simp.nexus.ver"]
+    if attrs && (attrs["#{attr_prefix}.pup.simp.mtime"].to_i != File.mtime(resource[:path]).to_i)
+      :mtime_changed
+    elsif resource[:ensure] == :present && File.exist?(resource[:path])
+      return :present
+    elsif attrs && attrs["#{attr_prefix}.pup.simp.nexus.ver"]
+      attrs["#{attr_prefix}.pup.simp.nexus.ver"]
     else
-      return :unknown_version
+      :unknown_version
     end
   end
 
   # Determine if the file is in sync with the expected state
   #
-  # @param is [Symbol, String] the current state of the resource as returned from #ensure
-  # @param should [Symbol, String] the expected state of the resource
+  # @param current_value [Symbol, String] the current state of the resource as returned from #ensure
+  # @param expected_value [Symbol, String] the expected state of the resource
   #
   # @return [Boolean] whether or not the resource is in sync with the expected state
-  def insync?(is, should)
+  def ensure_insync?(current_value, expected_value)
+
+    # If the mtime of the file has changed, re-download the artifact
+    return false if (current_value == :mtime_changed)
+
+    target_exists = File.exist?(resource[:path])
+
+    # Return if the file is absent but we want it to be present
+    return target_exists if (expected_value == :present)
+
+    # Return if the file is present but we want it to be absent
+    return !target_exists if (expected_value == :absent)
+
+    # At this point, the target file should exist, otherwise the resource is out
+    # of sync
+    return false unless target_exists
+
+    # Assume that the system is out of sync by default
     is_insync = false
     do_full_checksum = false
 
-    # Check if the resource is present
-    if resource[:ensure] == :present
-      is_insync = File.exist?(resource[:path])
-    # Check if the resource is absent
-    elsif resource[:ensure] == :absent
-      is_insync = !File.exist?(resource[:path])
-    else
-      file_attrs = get_file_attrs(resource[:path])
+    file_attrs = get_file_attrs(resource[:path])
 
-      # If the resource has file attributes...
-      if file_attrs && !file_attrs.empty?
-        # If the file has been modified, assume that it is out of sync
-        Puppet.debug("#{self.to_s}: Checking mtime of '#{resource[:path]}'")
+    # If the resource has file attributes...
+    unless file_attrs&.empty?
+      current_version = file_attrs["#{attr_prefix}.pup.simp.nexus.ver"]
 
-        # And the modification time has not changed...
-        if file_attrs["#{attr_prefix}.pup.simp.mtime"].to_i == File.mtime(resource[:path]).to_i
+      if current_version
+        Puppet.debug("#{self}: Found metadata version '#{current_version}' for '#{resource[:path]}'")
 
-          current_version = file_attrs["#{attr_prefix}.pup.simp.nexus.ver"]
-          if current_version
-            Puppet.debug("#{self.to_s}: Found metadata version '#{current_version}' for '#{resource[:path]}'")
+        # Avoid network calls if we already have a matching version
+        unless expected_value == :latest
+          is_insync = expected_value == current_version
+        end
 
-            # Avoid network calls if we already have a matching version
-            unless resource[:ensure] == :latest
-              is_insync = resource[:ensure] == current_version
-            end
+        # If we do not have a matching version, then fetch the resource
+        # metadata from Nexus and perform the comparison
+        unless is_insync
+          artifact = get_artifact(resource)
 
-            # If we do not have a matching version, then fetch the resource
-            # metadata from Nexus and perform the comparison
-            unless is_insync
-              artifact = get_artifact(resource)
+          Puppet.debug("#{self}: Checking upstream version '#{artifact['version']}' against '#{current_version}' for '#{resource[:path]}'")
 
-              Puppet.debug("#{self.to_s}: Checking upstream version '#{artifact['version']}' against '#{current_version}' for '#{resource[:path]}'")
-
-              if artifact
-                is_insync = artifact['version'] == file_attrs['user.pup.simp.nexus.ver']
-              end
-            end
-          else
-            # If we could not find the current version in the metadata, we need
-            # to rely on checksums
-            checksums = file_attrs.keys.grep(/\.cksum\..+/)
-
-            # If there is no checksum metadata, request a full checksum
-            if checksums.empty?
-              Puppet.debug("#{self.to_s}: No metadata checksums found for '#{resource[:path]}'")
-
-              do_full_checksum = true
-            else
-              # If there is checksum metadata, loop through all metadata and
-              # compare the metadata
-              artifact = get_artifact(resource)
-
-              checksums.each do |cksum|
-                cksum_type = cksum.split('.').last
-
-                if artifact['checksum'] && artifact['checksum'][cksum_type]
-
-                  artifact_checksum = artifact['checksum'][cksum_type]
-
-                  Puppet.debug("#{self.to_s}: Checking upstream '#{cksum_type}' with value '#{cksum}' against metadata '#{file_attrs[cksum]}' for '#{resource[:path]}'")
-
-                  is_insync = true if (artifact_checksum && (artifact_checksum == file_attrs[cksum]))
-
-                  break
-                end
-              end
-            end
+          if artifact
+            is_insync = (artifact['version'] == current_version)
           end
         end
       else
-        # If we have no file metadata, we have to compare based on a full
-        # checksum
-        Puppet.debug("#{self.to_s}: No local file metadata found for '#{resource[:path]}'")
+        # If we could not find the current version in the metadata, we need
+        # to rely on checksums
+        checksums = file_attrs.keys.grep(%r{\.cksum\..+})
 
-        do_full_checksum = true
-      end
+        # If there is no checksum metadata, request a full checksum
+        if checksums.empty?
+          Puppet.debug("#{self}: No metadata checksums found for '#{resource[:path]}'")
 
-      # Perform a full file checksum if requested
-      if do_full_checksum
-        Puppet.debug("#{self.to_s}: Performing a full checksum on '#{resource[:path]}'")
+          do_full_checksum = true
+        else
+          # If there is checksum metadata, loop through all metadata and
+          # compare the metadata
+          artifact = get_artifact(resource)
 
-        artifact = get_artifact(resource)
+          checksums.each do |cksum|
+            cksum_type = cksum.split('.').last
 
-        artifact['checksum'].sort.each do |cksum_type, artifact_cksum|
-          if checksum_file(resource[:path], cksum_type, artifact_cksum)
-            is_insync = true
+            next unless artifact['checksum'] && artifact['checksum'][cksum_type]
+
+            artifact_checksum = artifact['checksum'][cksum_type]
+
+            Puppet.debug("#{self}: Checking upstream '#{cksum_type}' with value '#{cksum}' against metadata '#{file_attrs[cksum]}' for '#{resource[:path]}'")
+
+            is_insync = true if artifact_checksum && (artifact_checksum == file_attrs[cksum])
+
             break
           end
         end
       end
+    else
+      # If we have no file metadata, we have to compare based on a full
+      # checksum
+      Puppet.debug("#{self}: No local file metadata found for '#{resource[:path]}'")
+
+      do_full_checksum = true
     end
 
-    return is_insync
+    # Perform a full file checksum if requested
+    if do_full_checksum
+      Puppet.debug("#{self}: Performing a full checksum on '#{resource[:path]}'")
+
+      artifact = get_artifact(resource)
+
+      artifact['checksum'].sort.each do |cksum_type, artifact_cksum|
+        if checksum_file(resource[:path], cksum_type, artifact_cksum)
+          is_insync = true
+          break
+        end
+      end
+    end
+
+    is_insync
   end
 
   # Bring the system into a compliant state
@@ -138,12 +146,10 @@ Puppet::Type.type(:nexus_artifact).provide(:nexus_artifact) do
     else
       artifact = get_artifact(resource)
 
-      if artifact
-        download_asset(resource[:path], artifact, resource[:verify_download])
-        set_file_attrs(resource[:path], artifact)
-      else
-        raise Puppet::Error, "Could not find '#{resource[:repository]}/#{resource[:artifact]}' version '#{resource[:ensure]}' on '#{resource[:server]}'"
-      end
+      raise Puppet::Error, "Could not find '#{resource[:repository]}/#{resource[:artifact]}' version '#{resource[:ensure]}' on '#{resource[:server]}'" unless artifact
+
+      download_asset(resource[:path], artifact, resource[:verify_download])
+      set_file_attrs(resource[:path], artifact)
     end
   end
 
@@ -157,11 +163,9 @@ Puppet::Type.type(:nexus_artifact).provide(:nexus_artifact) do
   #
   # @return [void]
   def destroy(path)
-    if File.file?(path)
-      Puppet::FileSystem.unlink(path)
-    else
-      raise Puppet::Error, "Refusing to remove directory at #{path}"
-    end
+    raise Puppet::Error, "Refusing to remove directory at #{path}" unless File.file?(path)
+
+    Puppet::FileSystem.unlink(path)
   end
 
   # Set up a valid HTTP(S) connection and return it alongside the crafted
@@ -208,19 +212,17 @@ Puppet::Type.type(:nexus_artifact).provide(:nexus_artifact) do
       end
 
       if resource[:ca_certificate]
-        if File.exist?(resource[:ca_certificate])
-          if File.directory?(resource[:ca_certificate])
-            conn.ca_path = resource[:ca_certificate]
-          else
-            conn.ca_file = resource[:ca_certificate]
-          end
+        raise Puppet::Error, "ca_certificate not found at '#{resource[:ca_certificate]}'" unless File.exist?(resource[:ca_certificate])
+
+        if File.directory?(resource[:ca_certificate])
+          conn.ca_path = resource[:ca_certificate]
         else
-          raise Puppet::Error, "ca_certificate not found at '#{resource[:ca_certificate]}'"
+          conn.ca_file = resource[:ca_certificate]
         end
       end
     end
 
-    if resource[:connection_timeout] && (resource[:connection_timeout] > 0)
+    if resource[:connection_timeout]&.positive?
       conn.read_timeout = resource[:connection_timeout]
     end
 
@@ -233,7 +235,7 @@ Puppet::Type.type(:nexus_artifact).provide(:nexus_artifact) do
       end
     end
 
-    return [request, conn]
+    [request, conn]
   end
 
   # Download an artifact from the Nexus server
@@ -251,13 +253,13 @@ Puppet::Type.type(:nexus_artifact).provide(:nexus_artifact) do
 
     retval = nil
 
-    if resource[:ensure].to_s == 'latest'
+    if [:latest, :present].include?(resource[:ensure])
       return @latest_artifact if @latest_artifact
 
-      retval = artifacts.sort do |a, b|
+      retval = artifacts.max do |a, b|
         # If we have two versions, compare them
         if a['version'] && b['version']
-          Puppet::Util::Package.versioncmp( a['version'], b['version'] )
+          Puppet::Util::Package.versioncmp(a['version'], b['version'])
         # If only a has a version, it wins
         elsif a['version']
           1
@@ -268,9 +270,9 @@ Puppet::Type.type(:nexus_artifact).provide(:nexus_artifact) do
         else
           0
         end
-      end.last
+      end
     else
-      retval = artifacts.find{|a| a['version'] == resource[:ensure]}
+      retval = artifacts.find { |a| a['version'] == resource[:ensure] }
     end
 
     if retval
@@ -279,10 +281,10 @@ Puppet::Type.type(:nexus_artifact).provide(:nexus_artifact) do
       retval = retval['assets'].first
       retval['version'] = artifact_version
 
-      @latest_artifact = retval if (resource[:ensure].to_s == 'latest')
+      @latest_artifact = retval if resource[:ensure].to_s == 'latest'
     end
 
-    return retval
+    retval
   end
 
   # Retrieve all artifacts on the Nexus server that match the resource query
@@ -302,21 +304,18 @@ Puppet::Type.type(:nexus_artifact).provide(:nexus_artifact) do
     conn.start do |http|
       response = http.request(request)
 
-      raise Puppet::Error, response.message unless (response.code == '200')
+      raise Puppet::Error, response.message unless response.code == '200'
 
       require 'json'
 
-      response_body = JSON.load(response.body)
+      response_body = JSON.parse(response.body)
 
       sleep(resource[:sleep] || 0)
 
-      if response_body['continuationToken']
-        _source = source.split('&continuationToken').first
+      return response_body['items'] unless response_body['continuationToken']
 
-        return response_body['items'] + get_artifact_items("#{_source}&continuationToken=#{response_body['continuationToken']}", resource)
-      else
-        return response_body['items']
-      end
+      temp_source = source.split('&continuationToken').first
+      return response_body['items'] + get_artifact_items("#{temp_source}&continuationToken=#{response_body['continuationToken']}", resource)
     end
   end
 
@@ -336,10 +335,10 @@ Puppet::Type.type(:nexus_artifact).provide(:nexus_artifact) do
     require 'net/http'
 
     source = resource[:protocol].to_s + '://' +
-      resource[:server] +
-      '/service/rest/v1/search?' +
-      'repository=' + resource[:repository] +
-      '&name=' + resource[:artifact]
+             resource[:server] +
+             '/service/rest/v1/search?' \
+             'repository=' + resource[:repository] +
+             '&name=' + resource[:artifact]
 
     begin
       artifact_items = get_artifact_items(source, resource)
@@ -347,8 +346,8 @@ Puppet::Type.type(:nexus_artifact).provide(:nexus_artifact) do
       raise Puppet::Error, "No remote artifacts found at #{source}" if artifact_items.empty?
 
       @remote_artifacts = artifact_items
-      return @remote_artifacts
-    rescue => e
+      @remote_artifacts
+    rescue StandardError => e
       # This catches all of the random possible things that can go wrong with
       # HTTP connections.
       raise Puppet::Error, "Could not fetch artifacts from '#{resource[:repository]}/#{resource[:artifact]}' => '#{e}'"
@@ -368,7 +367,7 @@ Puppet::Type.type(:nexus_artifact).provide(:nexus_artifact) do
   #     matching checksum could not be performed
   #
   # @return [void]
-  def download_asset(path, artifact, verify=false)
+  def download_asset(path, artifact, verify = false)
     target_dir = File.dirname(path)
     target_filename = File.basename(path)
     temp_file = File.join(target_dir, '.' + target_filename)
@@ -389,25 +388,24 @@ Puppet::Type.type(:nexus_artifact).provide(:nexus_artifact) do
       end
 
       if verify
-        Puppet.debug("#{self.to_s}: Performing download validation on '#{temp_file}'")
+        Puppet.debug("#{self}: Performing download validation on '#{temp_file}'")
 
         validation_failed = true
 
         artifact['checksum'].sort.each do |cksum_type, artifact_cksum|
           file_checksum = checksum_file(temp_file, cksum_type)
 
-          if file_checksum
-            raise Puppet::Error, "Checksum did not match '#{artifact_cksum}'" if (file_checksum != artifact_cksum)
+          next unless file_checksum
+          raise Puppet::Error, "Checksum did not match '#{artifact_cksum}'" if file_checksum != artifact_cksum
 
-            validation_failed = false
-          end
+          validation_failed = false
         end
 
-        raise Puppet::Error, 'No checksums could be computed' if  validation_failed
+        raise Puppet::Error, 'No checksums could be computed' if validation_failed
       end
 
       FileUtils.mv(temp_file, path)
-    rescue => e
+    rescue StandardError => e
       raise(Puppet::Error, "Error when downloading '#{artifact['downloadUrl']}' => '#{e}'")
     ensure
       FileUtils.rm(temp_file) if File.exist?(temp_file)
@@ -429,7 +427,7 @@ Puppet::Type.type(:nexus_artifact).provide(:nexus_artifact) do
   def getfattr
     @getfattr ||= Puppet::Util.which('getfattr')
 
-    return @getfattr
+    @getfattr
   end
 
   # Return a specific file attribute from a file that matches `key`
@@ -448,11 +446,11 @@ Puppet::Type.type(:nexus_artifact).provide(:nexus_artifact) do
     command = [getfattr, '-d', '-m', key, path]
     output = Puppet::Util::Execution.execute(command, failonfail: false, combine: true)
 
-    unless output.exitstatus == 0
-      Puppet.debug("#{self.to_s}: Could not get attributes on #{path} '#{command.join(' ')}' failed: '#{output.to_s}'")
+    unless output.exitstatus.zero?
+      Puppet.debug("#{self}: Could not get attributes on #{path} '#{command.join(' ')}' failed: '#{output}'")
     end
 
-    return output
+    output
   end
 
   # Return all extended file attributes
@@ -465,29 +463,27 @@ Puppet::Type.type(:nexus_artifact).provide(:nexus_artifact) do
 
     return attrs unless File.exist?(path)
 
-    Puppet.debug("#{self.to_s}: Getting extended attributes from '#{path}'")
+    Puppet.debug("#{self}: Getting extended attributes from '#{path}'")
 
     if Facter.value(:kernel).downcase == 'windows'
       # TODO
-    else
-      if getfattr
-        output = get_file_attribute(path, "#{attr_prefix}.")
+    elsif getfattr
+      output = get_file_attribute(path, "#{attr_prefix}.")
 
-        if output.exitstatus == 0
-          attrs = Hash[
-            output.lines.grep(/=/).map do |line|
-              k,v = line.strip.split('=')
-              v.gsub!(/(\A"|"\Z)/, '')
-              [k,v]
-            end
-          ]
-        end
-      else
-        Puppet.debug("#{self.to_s}: getfattr not found, cannot get extended attributes")
+      if output.exitstatus.zero?
+        attrs = Hash[
+          output.lines.grep(%r{=}).map do |line|
+            k, v = line.strip.split('=')
+            v.gsub!(%r{(\A"|"\Z)}, '')
+            [k, v]
+          end
+        ]
       end
+    else
+      Puppet.debug("#{self}: getfattr not found, cannot get extended attributes")
     end
 
-    return attrs
+    attrs
   end
 
   # Return the path to the `setfattr` command
@@ -496,7 +492,7 @@ Puppet::Type.type(:nexus_artifact).provide(:nexus_artifact) do
   def setfattr
     @setfattr ||= Puppet::Util.which('setfattr')
 
-    return @setfattr
+    @setfattr
   end
 
   # Set all file metadata
@@ -510,43 +506,39 @@ Puppet::Type.type(:nexus_artifact).provide(:nexus_artifact) do
   # @see setfattr(1)
   #
   # @return [String,nil] the matching file attribute
-  def set_file_attrs(path, asset_info={})
-    if File.exist?(path)
-      attrs = [
-        %{#{attr_prefix}.pup.simp.mtime="#{File.mtime(path).to_i}"}
-      ]
+  def set_file_attrs(path, asset_info = {})
+    return unless File.exist?(path)
 
-      if asset_info['checksum']
-        asset_info['checksum'].each do |family, value|
-          attrs << %{#{attr_prefix}.cksum.#{family}="#{value}"}
+    attrs = [
+      %(#{attr_prefix}.pup.simp.mtime="#{File.mtime(path).to_i}"),
+    ]
+
+    asset_info['checksum']&.each do |family, value|
+      attrs << %(#{attr_prefix}.cksum.#{family}="#{value}")
+    end
+
+    if asset_info['version']
+      attrs << %(#{attr_prefix}.pup.simp.nexus.ver="#{asset_info['version']}")
+    end
+
+    Puppet.debug("#{self}: Setting extended attributes on '#{path}'")
+
+    if Facter.value(:kernel).downcase == 'windows'
+      # TODO
+    elsif setfattr
+      Dir.mktmpdir do |_tmpdir|
+        # The 'getfattr --dump' format allows for a single command call
+        File.write('temp.attrs', (["# file: #{path}"] + attrs).join("\n"))
+
+        command = [setfattr, '--restore', 'temp.attrs']
+        output = Puppet::Util::Execution.execute(command, failonfail: false, combine: true)
+
+        unless output.exitstatus.zero?
+          Puppet.debug("#{self}: Could not set attributes on #{path} '#{command.join(' ')}' failed: '#{output}'")
         end
       end
-
-      if asset_info['version']
-        attrs << %{#{attr_prefix}.pup.simp.nexus.ver="#{asset_info['version']}"}
-      end
-
-      Puppet.debug("#{self.to_s}: Setting extended attributes on '#{path}'")
-
-      if Facter.value(:kernel).downcase == 'windows'
-        # TODO
-      else
-        if setfattr
-          Dir.mktmpdir do |tmpdir|
-            # The 'getfattr --dump' format allows for a single command call
-            File.write('temp.attrs', ([ "# file: #{path}" ] + attrs).join("\n"))
-
-            command = [setfattr, '--restore', 'temp.attrs']
-            output = Puppet::Util::Execution.execute(command, failonfail: false, combine: true)
-
-            unless output.exitstatus == 0
-              Puppet.debug("#{self.to_s}: Could not set attributes on #{path} '#{command.join(' ')}' failed: '#{output.to_s}'")
-            end
-          end
-        else
-          Puppet.debug("#{self.to_s}: setfattr not found, cannot set extended attributes")
-        end
-      end
+    else
+      Puppet.debug("#{self}: setfattr not found, cannot set extended attributes")
     end
   end
 
@@ -563,28 +555,28 @@ Puppet::Type.type(:nexus_artifact).provide(:nexus_artifact) do
   #   * String (default) => The checksum of the file
   #   * Boolean => if `to_match` is passed
   #   * nil => If no checksum could be performed using cksum_type
-  def checksum_file(path, cksum_type, to_match=nil)
+  def checksum_file(path, cksum_type, to_match = nil)
     file_checksum = nil
 
     if Puppet::Util::Checksums.respond_to?("#{cksum_type}_file")
       begin
-        Puppet.debug("#{self.to_s}: Processing #{path} with checksum #{cksum_type}")
+        Puppet.debug("#{self}: Processing #{path} with checksum #{cksum_type}")
 
         file_checksum = Puppet::Util::Checksums.public_send("#{cksum_type}_file", path)
-      rescue => e
+      rescue StandardError => e
         # Catch any errors in performing the checksum since the
         # underlying platform may not support all types
         #
         # If all checks fail, the resource will be marked as out of sync
         # and re-downloaded
-        Puppet.debug("#{self.to_s}: Could not use checksum #{cksum_type} => #{e}")
+        Puppet.debug("#{self}: Could not use checksum #{cksum_type} => #{e}")
       end
     end
 
     if to_match
-      return file_checksum == to_match
+      file_checksum == to_match
     else
-      return file_checksum
+      file_checksum
     end
   end
 end

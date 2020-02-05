@@ -4,6 +4,8 @@
   unmanaged: true
 .travis.yml:
   unmanaged: true
+.rubocop.yml:
+  unmanaged: true
 Gemfile:
   unmanaged: true
   # This nonsense makes pdk new provider work

@@ -1,0 +1,31 @@
+<%
+  if ENV['BEAKER_HYPERVISOR']
+    hypervisor = ENV['BEAKER_HYPERVISOR']
+  else
+    hypervisor = 'vagrant'
+  end
+-%>
+HOSTS:
+  el7:
+    roles:
+      - default
+    platform: el-7-x86_64
+    box: centos/7
+    hypervisor: <%= hypervisor %>
+
+  win:
+    platform: windows-server-amd64
+    box: gusztavvargadr/windows-server
+    hypervisor: <%= hypervisor %>
+    vagrant_memsize: 2048
+    vagrant_cpus: 2
+    user: vagrant
+    communicator: winrm
+    is_cygwin: false
+
+CONFIG:
+  log_level: verbose
+  type: aio
+<% if ENV['BEAKER_PUPPET_COLLECTION'] -%>
+  puppet_collection: <%= ENV['BEAKER_PUPPET_COLLECTION'] %>
+<% end -%>

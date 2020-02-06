@@ -36,6 +36,8 @@ end
 group :system_tests do
   gem 'beaker'
   gem 'beaker-rspec'
+  gem 'beaker-vagrant', :git => 'https://github.com/puppetlabs/beaker-vagrant'
   gem 'beaker-windows'
+  gem 'beaker-puppet', :git => 'https://github.com/trevor-vaughan/beaker-puppet', :branch => 'windows_paths'
   gem 'simp-beaker-helpers', ENV.fetch('SIMP_BEAKER_HELPERS_VERSION', ['>= 1.14.6', '< 2.0'])
 end

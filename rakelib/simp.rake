@@ -14,7 +14,3 @@ if ENV['SIMP_RSPEC_FIXTURES_OVERRIDE'] == 'yes'
   # that does not have a metadata.json file in spec/fixtures/modules.
   fail('SIMP_RSPEC_FIXTURES_OVERRIDE cannot be set for this project because of custom, non-module fixtures')
 end
-
-require 'simp/rake/beaker'
-
-Simp::Rake::Beaker.new(File.join(__dir__, '..'))

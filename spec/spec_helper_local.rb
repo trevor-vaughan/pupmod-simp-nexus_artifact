@@ -24,7 +24,7 @@ default_hiera_config = <<~HIERA_CONFIG
     - "%{custom_hiera}"
     - "%{module_name}"
     - "default"
-HIERA_CONFIG
+  HIERA_CONFIG
 
 # This can be used from inside your spec tests to set the testable environment.
 # You can use this to stub out an ENC.
@@ -81,7 +81,7 @@ RSpec.configure do |c|
   }
 
   c.mock_framework = :rspec
-  c.mock_with :mocha
+  c.mock_with :rspec
 
   c.module_path = File.join(fixture_path, 'modules')
   c.manifest_dir = File.join(fixture_path, 'manifests')
@@ -101,7 +101,7 @@ RSpec.configure do |c|
   end
 
   c.before(:all) do
-    data = YAML.safe_load(default_hiera_config)
+    data = YAML.load(default_hiera_config)
     data[:yaml][:datadir] = File.join(fixture_path, 'hieradata')
 
     File.open(c.hiera_config, 'w') do |f|
@@ -138,7 +138,9 @@ RSpec.configure do |c|
 end
 
 Dir.glob("#{RSpec.configuration.module_path}/*").each do |dir|
-  Pathname.new(dir).realpath
-rescue StandardError
-  raise "ERROR: The module '#{dir}' is not installed. Tests cannot continue."
+  begin
+    Pathname.new(dir).realpath
+  rescue StandardError
+    raise "ERROR: The module '#{dir}' is not installed. Tests cannot continue."
+  end
 end

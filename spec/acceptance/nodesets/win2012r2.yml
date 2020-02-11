@@ -6,16 +6,9 @@
   end
 -%>
 HOSTS:
-  el7:
-    roles:
-      - default
-    platform: el-7-x86_64
-    box: centos/7
-    hypervisor: <%= hypervisor %>
-
-  win2019:
+  win2012r2:
     platform: windows-server-amd64
-    box: gusztavvargadr/windows-server
+    box: opentable/win-2012r2-standard-amd64-nocm
     hypervisor: <%= hypervisor %>
     vagrant_memsize: 2048
     vagrant_cpus: 2

@@ -6,16 +6,10 @@
   end
 -%>
 HOSTS:
-  el7:
-    roles:
-      - default
-    platform: el-7-x86_64
-    box: centos/7
-    hypervisor: <%= hypervisor %>
-
-  win2019:
+  win2016:
     platform: windows-server-amd64
     box: gusztavvargadr/windows-server
+    version: 1607.0.1909
     hypervisor: <%= hypervisor %>
     vagrant_memsize: 2048
     vagrant_cpus: 2

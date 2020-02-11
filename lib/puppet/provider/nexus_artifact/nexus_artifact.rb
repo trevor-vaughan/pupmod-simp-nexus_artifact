@@ -466,22 +466,23 @@ Puppet::Type.type(:nexus_artifact).provide(:nexus_artifact) do
     Puppet.debug("#{self}: Getting extended attributes from '#{path}'")
 
     if Facter.value(:kernel).downcase == 'windows'
-      # TODO
+      if File.exist?("#{path}:pup_nexus_artifact")
+        attrs = File.read("#{path}:pup_nexus_artifact").strip.lines
+      end
     elsif getfattr
       output = get_file_attribute(path, "#{attr_prefix}.")
-
-      if output.exitstatus.zero?
-        attrs = Hash[
-          output.lines.grep(%r{=}).map do |line|
-            k, v = line.strip.split('=')
-            v.gsub!(%r{(\A"|"\Z)}, '')
-            [k, v]
-          end
-        ]
-      end
+      attrs = output.lines if output.exitstatus.zero?
     else
       Puppet.debug("#{self}: getfattr not found, cannot get extended attributes")
     end
+
+    attrs = Hash[
+      attrs.grep(%r{=}).map do |line|
+        k, v = line.strip.split('=')
+        v.gsub!(%r{(\A"|"\Z)}, '')
+        [k, v]
+      end
+    ] if attrs
 
     attrs
   end
@@ -524,7 +525,14 @@ Puppet::Type.type(:nexus_artifact).provide(:nexus_artifact) do
     Puppet.debug("#{self}: Setting extended attributes on '#{path}'")
 
     if Facter.value(:kernel).downcase == 'windows'
-      # TODO
+      metadata_path = "#{path}:pup_nexus_artifact"
+      begin
+        fh = File.open(metadata_path, 'w')
+        fh.puts(attrs.join("\n"))
+        fh.close
+      rescue => e
+        Puppet.debug("#{self}: Issue writing file metadata on '#{metadata_path}' => '#{e}'")
+      end
     elsif setfattr
       Dir.mktmpdir do |_tmpdir|
         # The 'getfattr --dump' format allows for a single command call

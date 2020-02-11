@@ -41,6 +41,19 @@ Puppet::Type.newtype(:nexus_artifact) do
 
     defaultto(:present)
 
+    munge do |value|
+      value = case value
+      when true
+        :present
+      when false
+        :absent
+      when 'present', 'absent', 'latest'
+        value.to_sym
+      else
+        value
+      end
+    end
+
     def insync?(current_value)
       provider.ensure_insync?(current_value, should)
     end

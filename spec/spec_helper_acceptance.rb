@@ -14,6 +14,8 @@ unless ENV['BEAKER_provision'] == 'no'
     else
       install_puppet
     end
+
+    include Simp::BeakerHelpers::Windows if is_windows?(host)
   end
 end
 

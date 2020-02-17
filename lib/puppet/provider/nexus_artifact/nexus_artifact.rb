@@ -376,6 +376,7 @@ Puppet::Type.type(:nexus_artifact).provide(:nexus_artifact) do
       raise Puppet::Error, "Target directory '#{target_dir}' does not exist"
     end
 
+    Puppet.debug("#{self}: Downloading artifact version #{artifact['version']} to #{path}")
     begin
       request, conn = setup_connection(URI(artifact['downloadUrl']), resource)
 
@@ -388,7 +389,7 @@ Puppet::Type.type(:nexus_artifact).provide(:nexus_artifact) do
       end
 
       if verify
-        Puppet.debug("#{self}: Performing download validation on '#{temp_file}'")
+        Puppet.debug("#{self}: Performing checksum validation on '#{temp_file}'")
 
         validation_failed = true
 

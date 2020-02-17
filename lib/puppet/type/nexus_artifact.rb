@@ -132,6 +132,27 @@ Puppet::Type.newtype(:nexus_artifact) do
 
   ## Validation
 
+  newparam(:check_mtime, boolean: true, parent: Puppet::Parameter::Boolean) do
+    desc <<~DOC
+      Enable validation of the file modification time when evaluating if the
+      resource is in sync.
+
+      Has no effect if file metadata cannot be recorded or on Windows systems
+      due to updates to alternate data streams causing this value to change.
+    DOC
+    defaultto true
+  end
+
+  newparam(:check_size, boolean: true, parent: Puppet::Parameter::Boolean) do
+    desc <<~DOC
+      Enable validation of the file size when evaluating if the resource is in
+      sync.
+
+      Has no effect if file metadata cannot be recorded.
+    DOC
+    defaultto true
+  end
+
   newparam(:ca_certificate) do
     desc <<~DOC
       The path to a file containing the CA public certificate or a directory

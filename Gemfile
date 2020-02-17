@@ -34,10 +34,9 @@ group :development do
 end
 
 group :system_tests do
-  gem 'beaker', :path => ENV['HOME'] + '/Work/beaker'
-  gem 'beaker-puppet', :path => ENV['HOME'] + '/Work/beaker-puppet'
-  gem 'beaker-rspec'
+  gem 'beaker', :git => 'https://github.com/puppetlabs/beaker'
+  gem 'beaker-puppet', :git => 'https://github.com/puppetlabs/beaker-puppet'
   gem 'beaker-windows'
   #gem 'simp-beaker-helpers', ENV.fetch('SIMP_BEAKER_HELPERS_VERSION', ['>= 1.18.0', '< 2.0'])
-  gem 'simp-beaker-helpers', :path => ENV['HOME'] + '/Work/SIMP/rubygem-simp-beaker-helpers'
+  gem 'simp-beaker-helpers', :git => 'https://github.com/trevor-vaughan/rubygem-simp-beaker-helpers', :branch => 'SIMP-MAINT-fix_windows_lib'
 end

@@ -9,22 +9,43 @@ Puppet::Type.type(:nexus_artifact).provide(:nexus_artifact) do
   #   * :absent          => the file is not present
   #   * :present         => the file is present and the resource does not specify a version
   #   * String           => the actual version of the file from the file metadata
-  #   * :mtime_changed   => The mtime in the metadtaa does not match the target file
+  #   * :mtime_changed   => The mtime in the metadta does not match the target file
+  #   * :size_changed    => The size in the metadata does not match the target file
   #   * :unknown_version => unable to determine the version from the file metadata
   def ensure
     return :absent unless File.exist?(resource[:path])
 
     attrs = get_file_attrs(resource[:path])
 
-    if attrs && (attrs["#{attr_prefix}.pup.simp.mtime"].to_i != File.mtime(resource[:path]).to_i)
-      :mtime_changed
-    elsif resource[:ensure] == :present && File.exist?(resource[:path])
-      return :present
-    elsif attrs && attrs["#{attr_prefix}.pup.simp.nexus.ver"]
-      attrs["#{attr_prefix}.pup.simp.nexus.ver"]
-    else
-      :unknown_version
+    if resource[:check_size]
+      metadata_size = attrs["#{attr_prefix}.pup.simp.size"]
+      file_size= File.size(resource[:path]).to_i
+
+      if metadata_size && (metadata_size.to_i != file_size)
+        Puppet.debug("#{self}: size differs: XAttr => #{metadata_size}, File => #{file_size}")
+        return :size_changed
+      end
     end
+
+    if resource[:check_mtime]
+      metadata_mtime = attrs["#{attr_prefix}.pup.simp.mtime"]
+      file_mtime = File.mtime(resource[:path]).to_i
+
+      if metadata_mtime && (metadata_mtime.to_i != file_mtime)
+        Puppet.debug("#{self}: mtime differs: XAttr => #{metadata_mtime}, File => #{file_mtime}")
+        return :mtime_changed
+      end
+    end
+
+    if resource[:ensure] == :present && File.exist?(resource[:path])
+      return :present
+    end
+
+    if attrs && attrs["#{attr_prefix}.pup.simp.nexus.ver"]
+      return attrs["#{attr_prefix}.pup.simp.nexus.ver"]
+    end
+
+    return :unknown_version
   end
 
   # Determine if the file is in sync with the expected state
@@ -35,8 +56,8 @@ Puppet::Type.type(:nexus_artifact).provide(:nexus_artifact) do
   # @return [Boolean] whether or not the resource is in sync with the expected state
   def ensure_insync?(current_value, expected_value)
 
-    # If the mtime of the file has changed, re-download the artifact
-    return false if (current_value == :mtime_changed)
+    # If the size or mtime of the file has changed, re-download the artifact
+    return false if [:size_changed, :mtime_changed].include?(current_value)
 
     target_exists = File.exist?(resource[:path])
 
@@ -154,6 +175,13 @@ Puppet::Type.type(:nexus_artifact).provide(:nexus_artifact) do
   end
 
   private
+
+  # Determine if the underlying system is a Windows system
+  #
+  # @return [Boolean]
+  def on_windows?
+    Facter.value(:kernel).casecmp?('windows')
+  end
 
   # Remove a file from the system
   #
@@ -370,10 +398,18 @@ Puppet::Type.type(:nexus_artifact).provide(:nexus_artifact) do
   def download_asset(path, artifact, verify = false)
     target_dir = File.dirname(path)
     target_filename = File.basename(path)
-    temp_file = File.join(target_dir, '.' + target_filename)
+    temp_file = File.join(target_dir, '.puppet_temp.' + target_filename)
 
     unless File.directory?(target_dir)
       raise Puppet::Error, "Target directory '#{target_dir}' does not exist"
+    end
+
+    # Remove any old temp files in case extended attributes have already been
+    # written to them
+    if File.exist?(temp_file)
+      Puppet.debug("#{self}: Removing old temporary file at #{temp_file}")
+
+      FileUtils.rm_f(temp_file)
     end
 
     Puppet.debug("#{self}: Downloading artifact version #{artifact['version']} to #{path}")
@@ -466,7 +502,7 @@ Puppet::Type.type(:nexus_artifact).provide(:nexus_artifact) do
 
     Puppet.debug("#{self}: Getting extended attributes from '#{path}'")
 
-    if Facter.value(:kernel).downcase == 'windows'
+    if on_windows?
       if File.exist?("#{path}:pup_nexus_artifact")
         attrs = File.read("#{path}:pup_nexus_artifact").strip.lines
       end
@@ -499,8 +535,8 @@ Puppet::Type.type(:nexus_artifact).provide(:nexus_artifact) do
 
   # Set all file metadata
   #
-  # This will always set the `pup.simp.mtime` metadata but may also set
-  # `pup.simp.nexus.ver` and `cksum.<checksum_family>` items as appropriate
+  # This will always set the `pup.simp.size` metadata but may also set other
+  # items as appropriate
   #
   # @param path [String] the path to the file
   # @param asset_info [Hash] information about the asset as retrieved from #get_artifact
@@ -511,9 +547,16 @@ Puppet::Type.type(:nexus_artifact).provide(:nexus_artifact) do
   def set_file_attrs(path, asset_info = {})
     return unless File.exist?(path)
 
-    attrs = [
-      %(#{attr_prefix}.pup.simp.mtime="#{File.mtime(path).to_i}"),
-    ]
+    attrs = [ %(#{attr_prefix}.pup.simp.size="#{File.size(path)}") ]
+
+    unless on_windows?
+      # Windows systems update the modification time when extended attributes
+      # are written so this is not useful for comparison.
+      #
+      # Apparently, this can happen for numerous reasons so this is simply not a
+      # good check to perform on Windows systems in general.
+      attrs << %(#{attr_prefix}.pup.simp.mtime="#{File.mtime(path).to_i}")
+    end
 
     asset_info['checksum']&.each do |family, value|
       attrs << %(#{attr_prefix}.cksum.#{family}="#{value}")
@@ -525,7 +568,7 @@ Puppet::Type.type(:nexus_artifact).provide(:nexus_artifact) do
 
     Puppet.debug("#{self}: Setting extended attributes on '#{path}'")
 
-    if Facter.value(:kernel).downcase == 'windows'
+    if on_windows?
       metadata_path = "#{path}:pup_nexus_artifact"
       begin
         fh = File.open(metadata_path, 'w')

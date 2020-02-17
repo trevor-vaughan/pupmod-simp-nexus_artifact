@@ -52,7 +52,7 @@ describe 'nexus artifact download' do
           content = on(host, "getfattr -d -m - #{target_path}").stdout
         end
 
-        expect(content).to match(/pup.simp.mtime=/m)
+        expect(content).to match(/pup.simp.size=/m)
       end
     end
   end

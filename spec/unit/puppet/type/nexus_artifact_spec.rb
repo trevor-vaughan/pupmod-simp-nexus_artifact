@@ -97,5 +97,42 @@ describe nexus_artifact_type do
         end
       end
     end
+
+    context ':ssl_verify' do
+      let(:valid_values){{
+        'true'  => true,
+        'false' => false,
+        true    => true,
+        false   => false,
+        '5'     => 5,
+        5       => 5
+      }}
+
+      it 'should accept valid values' do
+        valid_values.each do |key, value|
+          resource = nexus_artifact_type.new(
+            :path       => '/tmp/foo',
+            :ensure     => 'latest',
+            :server     => 'foo.bar.baz',
+            :repository => 'test',
+            :artifact   => 'thingy',
+            :ssl_verify => key
+          )
+
+          expect(resource[:ssl_verify]).to eq(value)
+        end
+      end
+
+      it 'should reject invalid values' do
+        expect { nexus_artifact_type.new(
+          :path       => '/tmp/foo',
+          :ensure     => 'latest',
+          :server     => 'foo.bar.baz',
+          :repository => 'test',
+          :artifact   => 'thingy',
+          :ssl_verify => 'bob'
+        ) }.to raise_error(/Invalid value "bob"/)
+      end
+    end
   end
 end

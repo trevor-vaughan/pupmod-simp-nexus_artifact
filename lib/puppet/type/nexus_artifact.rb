@@ -152,15 +152,15 @@ Puppet::Type.newtype(:nexus_artifact) do
       Has no effect if `$ca_certificate` is not set
     DOC
 
-    newvalues(:true, :false, %r{\A\d+\Z})
+    newvalues(true, false, :true, :false, %r{\A\d+\Z})
 
     defaultto('true')
 
     munge do |value|
       case value
-      when 'true'
+      when 'true', true
         true
-      when 'false'
+      when 'false', false
         false
       else
         value.to_i
